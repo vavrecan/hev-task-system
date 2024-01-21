@@ -188,6 +188,24 @@ void hev_task_io_splice (int fd_a_i, int fd_a_o, int fd_b_i, int fd_b_o,
                          size_t buf_size, HevTaskIOYielder yielder,
                          void *yielder_data);
 
+/**
+ * hev_task_io_splice_counter:
+ * @fd_a_i: a file descriptor for input
+ * @fd_a_o: a file descriptor for output
+ * @fd_b_i: another file descriptor for input
+ * @fd_b_o: another file destriptor for output
+ * @buf_size: buffer length
+ * @yielder: a #HevTaskIOYielder
+ * @yielder_data: user data
+ * @sent: count of forwarded data
+ * @received: count of received data
+ *
+ * Adds counter to hev_task_io_splice method
+ */
+void hev_task_io_splice_counter (int fd_a_i, int fd_a_o, int fd_b_i, int fd_b_o,
+                         size_t buf_size, HevTaskIOYielder yielder,
+                         void *yielder_data, size_t *sent, size_t *received);
+
 #ifdef __cplusplus
 }
 #endif

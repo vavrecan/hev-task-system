@@ -40,6 +40,7 @@ struct _HevTaskIOSplicer
 #else
     HevCircularBuffer *buf;
 #endif /* !ENABLE_IO_SPLICE_SYSCALL */
+    size_t total;
 };
 
 EXPORT_SYMBOL int
@@ -229,6 +230,7 @@ task_io_splicer_init (HevTaskIOSplicer *self, size_t buf_size)
     buf_size = fcntl (self->fd[0], F_GETPIPE_SZ);
 #endif
 
+    self->total = 0;
     self->wlen = 0;
     self->blen = buf_size;
 
@@ -278,6 +280,8 @@ task_io_splice (HevTaskIOSplicer *self, int fd_in, int fd_out)
             res = 1;
             self->wlen -= s;
         }
+
+        self->total += s;
     }
 
     return res;
@@ -291,6 +295,8 @@ task_io_splicer_init (HevTaskIOSplicer *self, size_t buf_size)
     self->buf = hev_circular_buffer_new (buf_size);
     if (!self->buf)
         return -1;
+
+    self->total = 0;
 
     return 0;
 }
@@ -319,6 +325,7 @@ task_io_splice (HevTaskIOSplicer *self, int fd_in, int fd_out)
         } else {
             hev_circular_buffer_write_finish (self->buf, s);
         }
+        self->total += s;
     }
 
     iovc = hev_circular_buffer_reading (self->buf, iov);
@@ -333,6 +340,8 @@ task_io_splice (HevTaskIOSplicer *self, int fd_in, int fd_out)
             res = 1;
             hev_circular_buffer_read_finish (self->buf, s);
         }
+
+        self->total += s;
     }
 
     return res;
@@ -340,28 +349,25 @@ task_io_splice (HevTaskIOSplicer *self, int fd_in, int fd_out)
 
 #endif /* !ENABLE_IO_SPLICE_SYSCALL */
 
-EXPORT_SYMBOL void
-hev_task_io_splice (int fd_a_i, int fd_a_o, int fd_b_i, int fd_b_o,
-                    size_t buf_size, HevTaskIOYielder yielder,
-                    void *yielder_data)
-{
-    HevTaskIOSplicer splicer_f;
-    HevTaskIOSplicer splicer_b;
+inline
+static void hev_task_io_splice_internal (HevTaskIOSplicer *splicer_f, HevTaskIOSplicer *splicer_b,
+                                         int fd_a_i, int fd_a_o, int fd_b_i, int fd_b_o,
+                                         size_t buf_size, HevTaskIOYielder yielder, void *yielder_data) {
     int res_f = 1;
     int res_b = 1;
 
-    if (task_io_splicer_init (&splicer_f, buf_size) < 0)
+    if (task_io_splicer_init (splicer_f, buf_size) < 0)
         return;
-    if (task_io_splicer_init (&splicer_b, buf_size) < 0)
+    if (task_io_splicer_init (splicer_b, buf_size) < 0)
         goto exit;
 
     for (;;) {
         HevTaskYieldType type;
 
         if (res_f >= 0)
-            res_f = task_io_splice (&splicer_f, fd_a_i, fd_b_o);
+            res_f = task_io_splice (splicer_f, fd_a_i, fd_b_o);
         if (res_b >= 0)
-            res_b = task_io_splice (&splicer_b, fd_b_i, fd_a_o);
+            res_b = task_io_splice (splicer_b, fd_b_i, fd_a_o);
 
         if (fd_a_i == fd_a_o || fd_b_i == fd_b_o) {
             if (res_f < 0 || res_b < 0)
@@ -383,7 +389,39 @@ hev_task_io_splice (int fd_a_i, int fd_a_o, int fd_b_i, int fd_b_o,
         }
     }
 
-    task_io_splicer_fini (&splicer_b);
+    task_io_splicer_fini (splicer_b);
 exit:
-    task_io_splicer_fini (&splicer_f);
+    task_io_splicer_fini (splicer_f);
+}
+
+EXPORT_SYMBOL void
+hev_task_io_splice (int fd_a_i, int fd_a_o, int fd_b_i, int fd_b_o,
+                    size_t buf_size, HevTaskIOYielder yielder,
+                    void *yielder_data)
+{
+    HevTaskIOSplicer splicer_f;
+    HevTaskIOSplicer splicer_b;
+
+    hev_task_io_splice_internal (&splicer_f, &splicer_b, fd_a_i, fd_a_o, fd_b_i, fd_b_o, buf_size, yielder,
+                                 yielder_data);
+}
+
+
+EXPORT_SYMBOL void
+hev_task_io_splice_counter (int fd_a_i, int fd_a_o, int fd_b_i, int fd_b_o,
+                    size_t buf_size, HevTaskIOYielder yielder,
+                    void *yielder_data, size_t *sent, size_t *received)
+{
+    HevTaskIOSplicer splicer_f;
+    HevTaskIOSplicer splicer_b;
+
+    hev_task_io_splice_internal (&splicer_f, &splicer_b, fd_a_i, fd_a_o, fd_b_i, fd_b_o, buf_size, yielder,
+                                 yielder_data);
+
+    if (received) {
+        *received = splicer_b.total;
+    }
+    if (sent) {
+        *sent = splicer_f.total;
+    }
 }
